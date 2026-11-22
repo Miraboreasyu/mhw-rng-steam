@@ -540,8 +540,10 @@ void PrintSteamStatus() {
 
     const std::uint32_t engMode = g_host->GetEngineMode();
     const char* engNote = (engMode == kMhwRngModeOff)
-                              ? u8"框架已关闭(需开$rng on或observe才生效)"
-                              : ((engMode == kMhwRngModeObserveOnly) ? u8"仅观测" : u8"接管");
+                              ? u8"框架已关闭(需开$rng selective/$rng on或observe)"
+                              : ((engMode == kMhwRngModeObserveOnly)
+                                     ? u8"仅观测"
+                                     : ((engMode == kMhwRngModeSelective) ? u8"按需接管" : u8"全局接管"));
 
     g_host->ChatPrintf(u8"[steam] 提示:%s | 详细:%s | 样式:%s | 保底提醒:%s | 锁序:%s | 内核:%s",
                        hintEnabled ? u8"开" : u8"关",
@@ -578,7 +580,7 @@ void PrintSteamHelp() {
     g_host->ChatPrint(u8"[steam] 提示控制: `$rng steam [on|off]` | `$rng steam verbose [on|off]` (别名 `v`, 默认关: 静默锁序与保底)");
     g_host->ChatPrint(u8"[steam] 保底开关: `$rng steam pity [on|off]` (隐藏必中保底播报，需 `verbose on`)");
     g_host->ChatPrint(u8"[steam] 样式切换: `$rng steam style <kb|cn|xbox|ps|num>` (默认 kb: A-W-D (左-中-右))");
-    g_host->ChatPrint(u8"[steam] 可选锁序: `$rng steam lock [awd|adw|wad|wda|daw|dwa|r2|off]` (不写参数默认A-W-D，需`$rng on`)");
+    g_host->ChatPrint(u8"[steam] 可选锁序: `$rng steam lock [awd|adw|wad|wda|daw|dwa|r2|off]` (不写参数默认A-W-D，需按需/全局接管)");
     g_host->ChatPrint(u8"[steam] 统计清理: `$rng steam status` | `$rng steam reset`");
 }
 
@@ -729,8 +731,8 @@ void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*)
                 curVerbose    = g_verbose;
             }
             const char* quietNote = curVerbose ? "" : u8"；每轮静默，要显示开 `$rng steam verbose on`";
-            if (g_host->GetEngineMode() != kMhwRngModeTakeover) {
-                g_host->ChatPrintf(u8"[steam] 未指定顺序，已默认预设锁序=%s (按住空格/RT/R2；当前非接管模式，请先 `$rng on`%s)",
+            if (!g_host->IsTakeoverEnabled()) {
+                g_host->ChatPrintf(u8"[steam] 未指定顺序，已默认预设锁序=%s (按住空格/RT/R2；当前非接管模式，请先 `$rng selective` 或 `$rng on`%s)",
                                    FormatOrderText(kDefaultAwd, curStyle).c_str(),
                                    quietNote);
             } else {
@@ -765,9 +767,8 @@ void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*)
             curVerbose    = g_verbose;
         }
         const char* quietNote = curVerbose ? "" : u8" (每轮静默，如需播报开 `$rng steam verbose on`)";
-        const std::uint32_t engMode = g_host->GetEngineMode();
-        if (engMode != kMhwRngModeTakeover) {
-            g_host->ChatPrintf(u8"[steam] 已预设锁序=%s (注意: 当前非接管模式，请执行 `$rng on` 使锁序生效)%s",
+        if (!g_host->IsTakeoverEnabled()) {
+            g_host->ChatPrintf(u8"[steam] 已预设锁序=%s (注意: 当前非接管模式，请执行 `$rng selective` 或 `$rng on` 使锁序生效)%s",
                                FormatOrderText(ord, curStyle).c_str(),
                                quietNote);
         } else {

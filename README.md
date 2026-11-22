@@ -5,7 +5,7 @@
 - **宿主依赖**：`mhw_rng.dll`（Plugin SDK `kMhwRngApiVersion == 3`，头文件 [mhw_rng_api.h](include/mhw_rng_api.h)）
 - **接管调用点**：`0x066679A` / `0x06667BB`（三键排列生成）、`0x05CA0A2`（隐藏必中保底判定）
 
-`rng_steam` 为官方子插件与 `mhw_rng` Plugin SDK v3.0 参考实现，支持在 `ObserveOnly` 模式下仅观测并输出按键顺序，以及在 `Takeover` 模式下按逆算公式固定目标按键顺序。
+`rng_steam` 为官方子插件与 `mhw_rng` Plugin SDK v3.0 参考实现，支持在 `ObserveOnly` 模式下仅观测并输出按键顺序，以及在 `Selective`（默认按需接管）或 `Takeover` 模式下按逆算公式固定目标按键顺序。
 
 ---
 
