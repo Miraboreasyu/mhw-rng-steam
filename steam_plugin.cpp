@@ -159,23 +159,27 @@ const char* ButtonLabel(std::uint8_t btnId, HintStyle style) noexcept {
     }
 }
 
-const char* StyleNameCn(HintStyle style) noexcept {
+const char* StyleName(HintStyle style, bool en) noexcept {
     switch (style) {
-        case HintStyle::kChinese:  return u8"cn(左-中-右)";
-        case HintStyle::kXbox:     return u8"xbox(X-Y-B)";
-        case HintStyle::kPlaySta:  return u8"ps(方-三-圆)";
-        case HintStyle::kNumeric:  return u8"num(1-2-3)";
-        default:                   return u8"kb(A-W-D)";
+        case HintStyle::kChinese:  return en ? "cn(L-M-R)"      : u8"cn(左-中-右)";
+        case HintStyle::kXbox:     return "xbox(X-Y-B)";
+        case HintStyle::kPlaySta:  return en ? "ps(Sq-Tri-Cir)" : u8"ps(方-三-圆)";
+        case HintStyle::kNumeric:  return "num(1-2-3)";
+        default:                   return "kb(A-W-D)";
     }
 }
 
-std::string FormatOrderText(const std::array<std::uint8_t, 3>& ord, HintStyle style) {
+std::string FormatOrderText(const std::array<std::uint8_t, 3>& ord, HintStyle style, bool en) {
     char buf[96]{};
     const char* s0 = ButtonLabel(ord[0], style);
     const char* s1 = ButtonLabel(ord[1], style);
     const char* s2 = ButtonLabel(ord[2], style);
     if (style == HintStyle::kChinese || style == HintStyle::kNumeric) {
         std::snprintf(buf, sizeof(buf), "%s - %s - %s", s0, s1, s2);
+    } else if (en) {
+        static constexpr const char* kLmr[3] = { "L", "M", "R" };
+        std::snprintf(buf, sizeof(buf), "%s - %s - %s (%s-%s-%s)",
+                      s0, s1, s2, kLmr[ord[0]], kLmr[ord[1]], kLmr[ord[2]]);
     } else {
         std::snprintf(buf, sizeof(buf), "%s - %s - %s (%s-%s-%s)",
                       s0, s1, s2,
@@ -403,10 +407,11 @@ void __fastcall OnSteamCode2Post(const MhwRngDrawContext* ctx,
     // Quiet by default when `lockEnabled` (`verbose == false`): unlocked runs still show
     // the 3-key hint so manual Steamworks input works, while locked auto-hold stays quiet.
     if (hintEnabled && g_host && (!lockEnabled || verbose)) {
-        const std::string keyText = FormatOrderText(ord, style);
-        const char* redTag  = (tel.validCtrl && tel.isRedRound) ? u8" [红槽!]" : "";
-        const char* lockTag = lockEnabled ? u8" [锁序]" : "";
-        g_host->ChatPrintfAsync(u8"[蒸汽机 #%llu] %s%s%s",
+        const bool en = MhwRng_HostIsEnglish(g_host);
+        const std::string keyText = FormatOrderText(ord, style, en);
+        const char* redTag  = (tel.validCtrl && tel.isRedRound) ? (en ? " [RED!]" : u8" [红槽!]") : "";
+        const char* lockTag = lockEnabled ? (en ? " [LOCK]" : u8" [锁序]") : "";
+        g_host->ChatPrintfAsync(en ? "[Steam #%llu] %s%s%s" : u8"[蒸汽机 #%llu] %s%s%s",
                                 static_cast<unsigned long long>(roundNo),
                                 keyText.c_str(),
                                 redTag,
@@ -450,12 +455,15 @@ void __fastcall OnSteamAutoWinPost(const MhwRngDrawContext* ctx,
     }
 
     if (triggered && hintEnabled && notifyAutoWin && verbose && g_host) {
+        const bool en = MhwRng_HostIsEnglish(g_host);
         if (hasRoundNo) {
-            g_host->ChatPrintfAsync(u8"[蒸汽机 #%llu] 触发隐藏必中保底 (任意键全中! 保底率:%u%%)",
+            g_host->ChatPrintfAsync(en ? "[Steam #%llu] Hidden pity AUTO-WIN triggered (any key wins! Pity:%u%%)"
+                                       : u8"[蒸汽机 #%llu] 触发隐藏必中保底 (任意键全中! 保底率:%u%%)",
                                     static_cast<unsigned long long>(roundNo),
                                     pityPct);
         } else {
-            g_host->ChatPrintfAsync(u8"[蒸汽机] 触发隐藏必中保底 (任意键全中! 保底率:%u%%)",
+            g_host->ChatPrintfAsync(en ? "[Steam] Hidden pity AUTO-WIN triggered (any key wins! Pity:%u%%)"
+                                       : u8"[蒸汽机] 触发隐藏必中保底 (任意键全中! 保底率:%u%%)",
                                     pityPct);
         }
     }
@@ -478,24 +486,43 @@ bool __fastcall FormatSteamSlotStatus(const MhwRngSlotSnapshot* snap,
                                       std::size_t bufCap,
                                       void*) {
     if (!snap || !outBuf || bufCap == 0U) return false;
+    const bool en = MhwRng_HostIsEnglish(g_host);
     std::lock_guard<std::mutex> lk(g_stateMx);
     if (snap->callSiteRva == kRvaSteamAutoWin) {
-        std::snprintf(outBuf, bufCap, u8"只读观测隐藏必中保底 (已触发%llu次)",
+        std::snprintf(outBuf, bufCap,
+                      en ? "Observe hidden pity (triggered %llu)"
+                         : u8"只读观测隐藏必中保底 (已触发%llu次)",
                       static_cast<unsigned long long>(g_autoWinCount));
         return true;
     }
     if (g_lockEnabled) {
-        std::snprintf(outBuf, bufCap, u8"已锁序=%s | 提示=%s | 详细=%s (%llu轮)",
-                      FormatOrderText(g_lockOrder, g_style).c_str(),
-                      g_hintEnabled ? u8"开" : u8"关",
-                      g_verbose ? u8"开" : u8"关",
-                      static_cast<unsigned long long>(g_roundCount));
+        if (en) {
+            std::snprintf(outBuf, bufCap, "Locked=%s | Hint=%s | Verbose=%s (%llu rounds)",
+                          FormatOrderText(g_lockOrder, g_style, true).c_str(),
+                          g_hintEnabled ? "ON" : "OFF",
+                          g_verbose ? "ON" : "OFF",
+                          static_cast<unsigned long long>(g_roundCount));
+        } else {
+            std::snprintf(outBuf, bufCap, u8"已锁序=%s | 提示=%s | 详细=%s (%llu轮)",
+                          FormatOrderText(g_lockOrder, g_style, false).c_str(),
+                          g_hintEnabled ? u8"开" : u8"关",
+                          g_verbose ? u8"开" : u8"关",
+                          static_cast<unsigned long long>(g_roundCount));
+        }
     } else {
-        std::snprintf(outBuf, bufCap, u8"纯提示不改盘 | 样式=%s | %s | 详细=%s (%llu轮)",
-                      StyleNameCn(g_style),
-                      g_hintEnabled ? u8"开" : u8"关",
-                      g_verbose ? u8"开" : u8"关",
-                      static_cast<unsigned long long>(g_roundCount));
+        if (en) {
+            std::snprintf(outBuf, bufCap, "Hints only | Style=%s | %s | Verbose=%s (%llu rounds)",
+                          StyleName(g_style, true),
+                          g_hintEnabled ? "ON" : "OFF",
+                          g_verbose ? "ON" : "OFF",
+                          static_cast<unsigned long long>(g_roundCount));
+        } else {
+            std::snprintf(outBuf, bufCap, u8"纯提示不改盘 | 样式=%s | %s | 详细=%s (%llu轮)",
+                          StyleName(g_style, false),
+                          g_hintEnabled ? u8"开" : u8"关",
+                          g_verbose ? u8"开" : u8"关",
+                          static_cast<unsigned long long>(g_roundCount));
+        }
     }
     return true;
 }
@@ -505,6 +532,7 @@ bool __fastcall FormatSteamSlotStatus(const MhwRngSlotSnapshot* snap,
 // ============================================================================
 
 void PrintSteamStatus() {
+    const bool en = MhwRng_HostIsEnglish(g_host);
     bool          hintEnabled = false;
     bool          notifyAuto  = false;
     bool          verbose     = false;
@@ -539,76 +567,116 @@ void PrintSteamStatus() {
     }
 
     const std::uint32_t engMode = g_host->GetEngineMode();
-    const char* engNote = (engMode == kMhwRngModeOff)
-                              ? u8"框架已关闭(需开$rng selective/$rng on或observe)"
-                              : ((engMode == kMhwRngModeObserveOnly)
-                                     ? u8"仅观测"
-                                     : ((engMode == kMhwRngModeSelective) ? u8"按需接管" : u8"全局接管"));
-
-    g_host->ChatPrintf(u8"[steam] 提示:%s | 详细:%s | 样式:%s | 保底提醒:%s | 锁序:%s | 内核:%s",
-                       hintEnabled ? u8"开" : u8"关",
-                       verbose ? u8"开" : u8"关(锁序/保底静默)",
-                       StyleNameCn(style),
-                       notifyAuto ? u8"开" : u8"关",
-                       lockEnabled ? FormatOrderText(lockOrd, style).c_str() : u8"关(纯透视原版)",
-                       engNote);
+    const char* engNote = nullptr;
+    if (en) {
+        engNote = (engMode == kMhwRngModeOff)
+                      ? "OFF (need `$rng selective`/`on` or `observe`)"
+                      : ((engMode == kMhwRngModeObserveOnly)
+                             ? "ObserveOnly"
+                             : ((engMode == kMhwRngModeSelective) ? "Selective" : "Takeover"));
+        g_host->ChatPrintf("[steam] Hint:%s | Verbose:%s | Style:%s | Pity:%s | Lock:%s | Kernel:%s",
+                           hintEnabled ? "ON" : "OFF",
+                           verbose ? "ON" : "OFF(quiet lock/pity)",
+                           StyleName(style, true),
+                           notifyAuto ? "ON" : "OFF",
+                           lockEnabled ? FormatOrderText(lockOrd, style, true).c_str() : "OFF(vanilla)",
+                           engNote);
+    } else {
+        engNote = (engMode == kMhwRngModeOff)
+                      ? u8"框架已关闭(需开$rng selective/$rng on或observe)"
+                      : ((engMode == kMhwRngModeObserveOnly)
+                             ? u8"仅观测"
+                             : ((engMode == kMhwRngModeSelective) ? u8"按需接管" : u8"全局接管"));
+        g_host->ChatPrintf(u8"[steam] 提示:%s | 详细:%s | 样式:%s | 保底提醒:%s | 锁序:%s | 内核:%s",
+                           hintEnabled ? u8"开" : u8"关",
+                           verbose ? u8"开" : u8"关(锁序/保底静默)",
+                           StyleName(style, false),
+                           notifyAuto ? u8"开" : u8"关",
+                           lockEnabled ? FormatOrderText(lockOrd, style, false).c_str() : u8"关(纯透视原版)",
+                           engNote);
+    }
 
     if (lastValid) {
-        g_host->ChatPrintf(u8"[steam] 最近#%llu: %s%s%s | 连胜:%u | 隐藏保底率:%u%% | 统计:共%llu轮(红槽%llu/必中%llu)",
-                           static_cast<unsigned long long>(rounds),
-                           FormatOrderText(lastOrd, style).c_str(),
-                           lastRed ? u8"[红槽]" : "",
-                           lastAuto ? u8"[必中]" : (last10x ? u8"[10x]" : ""),
-                           static_cast<unsigned>(lastStreak),
-                           lastPity,
-                           static_cast<unsigned long long>(rounds),
-                           static_cast<unsigned long long>(reds),
-                           static_cast<unsigned long long>(autoWins));
-        g_host->ChatPrintf(u8"[steam] 6排列分布: awd=%llu adw=%llu wad=%llu wda=%llu daw=%llu dwa=%llu",
-                           static_cast<unsigned long long>(permCnts[0]),
-                           static_cast<unsigned long long>(permCnts[1]),
-                           static_cast<unsigned long long>(permCnts[2]),
-                           static_cast<unsigned long long>(permCnts[3]),
-                           static_cast<unsigned long long>(permCnts[4]),
-                           static_cast<unsigned long long>(permCnts[5]));
+        if (en) {
+            g_host->ChatPrintf("[steam] Last #%llu: %s%s%s | Streak:%u | Pity:%u%% | Total:%llu (Red:%llu / Pity:%llu)",
+                               static_cast<unsigned long long>(rounds),
+                               FormatOrderText(lastOrd, style, true).c_str(),
+                               lastRed ? "[RED]" : "",
+                               lastAuto ? "[AUTO-WIN]" : (last10x ? "[10x]" : ""),
+                               static_cast<unsigned>(lastStreak),
+                               lastPity,
+                               static_cast<unsigned long long>(rounds),
+                               static_cast<unsigned long long>(reds),
+                               static_cast<unsigned long long>(autoWins));
+            g_host->ChatPrintf("[steam] Perms: awd=%llu adw=%llu wad=%llu wda=%llu daw=%llu dwa=%llu",
+                               static_cast<unsigned long long>(permCnts[0]),
+                               static_cast<unsigned long long>(permCnts[1]),
+                               static_cast<unsigned long long>(permCnts[2]),
+                               static_cast<unsigned long long>(permCnts[3]),
+                               static_cast<unsigned long long>(permCnts[4]),
+                               static_cast<unsigned long long>(permCnts[5]));
+        } else {
+            g_host->ChatPrintf(u8"[steam] 最近#%llu: %s%s%s | 连胜:%u | 隐藏保底率:%u%% | 统计:共%llu轮(红槽%llu/必中%llu)",
+                               static_cast<unsigned long long>(rounds),
+                               FormatOrderText(lastOrd, style, false).c_str(),
+                               lastRed ? u8"[红槽]" : "",
+                               lastAuto ? u8"[必中]" : (last10x ? u8"[10x]" : ""),
+                               static_cast<unsigned>(lastStreak),
+                               lastPity,
+                               static_cast<unsigned long long>(rounds),
+                               static_cast<unsigned long long>(reds),
+                               static_cast<unsigned long long>(autoWins));
+            g_host->ChatPrintf(u8"[steam] 6排列分布: awd=%llu adw=%llu wad=%llu wda=%llu daw=%llu dwa=%llu",
+                               static_cast<unsigned long long>(permCnts[0]),
+                               static_cast<unsigned long long>(permCnts[1]),
+                               static_cast<unsigned long long>(permCnts[2]),
+                               static_cast<unsigned long long>(permCnts[3]),
+                               static_cast<unsigned long long>(permCnts[4]),
+                               static_cast<unsigned long long>(permCnts[5]));
+        }
     } else {
-        g_host->ChatPrint(u8"[steam] 尚无蒸汽机抽签记录；在据点开启蒸汽机并按下启动键后自动提示本轮三键顺序");
+        g_host->ChatPrint(en ? "[steam] No Steamworks draws yet; start a round at the Steamworks"
+                             : u8"[steam] 尚无蒸汽机抽签记录；在据点开启蒸汽机并按下启动键后自动提示本轮三键顺序");
     }
 }
 
 void PrintSteamHelp() {
-    g_host->ChatPrint(u8"[steam] 提示控制: `$rng steam [on|off]` | `$rng steam verbose [on|off]` (别名 `v`, 默认关: 静默锁序与保底)");
-    g_host->ChatPrint(u8"[steam] 保底开关: `$rng steam pity [on|off]` (隐藏必中保底播报，需 `verbose on`)");
-    g_host->ChatPrint(u8"[steam] 样式切换: `$rng steam style <kb|cn|xbox|ps|num>` (默认 kb: A-W-D (左-中-右))");
-    g_host->ChatPrint(u8"[steam] 可选锁序: `$rng steam lock [awd|adw|wad|wda|daw|dwa|r2|off]` (不写参数默认A-W-D，需按需/全局接管)");
-    g_host->ChatPrint(u8"[steam] 统计清理: `$rng steam status` | `$rng steam reset`");
+    if (MhwRng_HostIsEnglish(g_host)) {
+        g_host->ChatPrint("[steam] Hints: `$rng steam [on|off]` | `verbose [on|off]` (alias `v`, default off: quiet lock/pity)");
+        g_host->ChatPrint("[steam] Pity:  `$rng steam pity [on|off]` (hidden auto-win alerts, requires `verbose on`)");
+        g_host->ChatPrint("[steam] Style: `$rng steam style <kb|cn|xbox|ps|num>` (default kb: A-W-D)");
+        g_host->ChatPrint("[steam] Lock:  `$rng steam lock [awd|adw|wad|wda|daw|dwa|r2|off]` (default awd for holding Space/RT/R2)");
+        g_host->ChatPrint("[steam] Info:  `$rng steam status` | `$rng steam reset`");
+    } else {
+        g_host->ChatPrint(u8"[steam] 提示控制: `$rng steam [on|off]` | `$rng steam verbose [on|off]` (别名 `v`, 默认关: 静默锁序与保底)");
+        g_host->ChatPrint(u8"[steam] 保底开关: `$rng steam pity [on|off]` (隐藏必中保底播报，需 `verbose on`)");
+        g_host->ChatPrint(u8"[steam] 样式切换: `$rng steam style <kb|cn|xbox|ps|num>` (默认 kb: A-W-D (左-中-右))");
+        g_host->ChatPrint(u8"[steam] 可选锁序: `$rng steam lock [awd|adw|wad|wda|daw|dwa|r2|off]` (不写参数默认A-W-D，需按需/全局接管)");
+        g_host->ChatPrint(u8"[steam] 统计清理: `$rng steam status` | `$rng steam reset`");
+    }
 }
 
 void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*) {
     if (!g_host) return;
+    const bool en = MhwRng_HostIsEnglish(g_host);
     if (argc == 0) {
         PrintSteamStatus();
         return;
     }
 
     const std::string a0 = LowerAscii(argv[0]);
-    if (a0 == "status" || a0 == "stat" || a0 == "info") {
-        PrintSteamStatus();
-        return;
-    }
-    if (a0 == "help" || a0 == "?") {
-        PrintSteamHelp();
-        return;
-    }
+    if (a0 == "status" || a0 == "stat" || a0 == "info") { PrintSteamStatus(); return; }
+    if (a0 == "help" || a0 == "?") { PrintSteamHelp(); return; }
     if (a0 == "on" || a0 == "enable") {
         {
             std::lock_guard<std::mutex> lk(g_stateMx);
             g_hintEnabled = true;
         }
         if (g_host->GetEngineMode() == kMhwRngModeOff) {
-            g_host->ChatPrint(u8"[steam] 已开启蒸汽机按键实时提示 (提示: 当前框架为关闭状态，需 `$rng observe` 或 `$rng on`)");
+            g_host->ChatPrint(en ? "[steam] Live hints ON (kernel is OFF; run `$rng observe`, `$rng selective`, or `$rng on`)"
+                                 : u8"[steam] 已开启蒸汽机按键实时提示 (提示: 当前框架为关闭状态，需 `$rng observe`/`$rng selective` 或 `$rng on`)");
         } else {
-            g_host->ChatPrint(u8"[steam] 已开启蒸汽机按键实时提示");
+            g_host->ChatPrint(en ? "[steam] Live hints ON" : u8"[steam] 已开启蒸汽机按键实时提示");
         }
         return;
     }
@@ -617,7 +685,7 @@ void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*)
             std::lock_guard<std::mutex> lk(g_stateMx);
             g_hintEnabled = false;
         }
-        g_host->ChatPrint(u8"[steam] 已关闭蒸汽机按键实时提示");
+        g_host->ChatPrint(en ? "[steam] Live hints OFF" : u8"[steam] 已关闭蒸汽机按键实时提示");
         return;
     }
     if (a0 == "reset" || a0 == "clear") {
@@ -634,30 +702,33 @@ void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*)
             g_lastPityPct  = 0U;
             g_lastStreak   = 0U;
         }
-        g_host->ChatPrint(u8"[steam] 已清除锁序并重置蒸汽机统计计数");
+        g_host->ChatPrint(en ? "[steam] Cleared order lock and reset Steamworks stats"
+                             : u8"[steam] 已清除锁序并重置蒸汽机统计计数");
         return;
     }
     if (a0 == "verbose" || a0 == "v") {
         if (argc < 2) {
             bool cur = false;
             { std::lock_guard<std::mutex> lk(g_stateMx); cur = g_verbose; }
-            g_host->ChatPrintf(u8"[steam] 详细提示(verbose)当前: %s (开=每轮锁序与隐藏保底均播报；关=仅原版未锁序时提示 | 用法: `$rng steam verbose on|off`)",
-                               cur ? u8"开" : u8"关");
+            g_host->ChatPrintf(en ? "[steam] Verbose is %s (`$rng steam verbose on|off`)"
+                                  : u8"[steam] 详细提示(verbose)当前: %s (开=每轮锁序与隐藏保底均播报；关=仅原版未锁序时提示 | 用法: `$rng steam verbose on|off`)",
+                               cur ? (en ? "ON" : u8"开") : (en ? "OFF" : u8"关"));
             return;
         }
         const std::string v = LowerAscii(argv[1]);
-        const bool en = (v == "on" || v == "1" || v == "true");
-        if (!en && v != "off" && v != "0" && v != "false") {
-            g_host->ChatPrint(u8"[steam] 用法: `$rng steam verbose <on|off>`");
+        const bool val = (v == "on" || v == "1" || v == "true");
+        if (!val && v != "off" && v != "0" && v != "false") {
+            g_host->ChatPrint(en ? "[steam] Usage: `$rng steam verbose <on|off>`" : u8"[steam] 用法: `$rng steam verbose <on|off>`");
             return;
         }
         {
             std::lock_guard<std::mutex> lk(g_stateMx);
-            g_verbose = en;
+            g_verbose = val;
         }
-        g_host->ChatPrintf(u8"[steam] 详细提示(verbose)已%s (%s)",
-                           en ? u8"开启" : u8"关闭",
-                           en ? u8"锁序每轮与隐藏保底将播报" : u8"仅保留原版未锁序时的按键提示");
+        g_host->ChatPrintf(en ? "[steam] Verbose %s" : u8"[steam] 详细提示(verbose)已%s (%s)",
+                           val ? (en ? "ON (shows locked rounds & pity)" : u8"开启")
+                               : (en ? "OFF (quiet when locked)" : u8"关闭"),
+                           val ? (en ? "" : u8"锁序每轮与隐藏保底将播报") : (en ? "" : u8"仅保留原版未锁序时的按键提示"));
         return;
     }
 
@@ -670,33 +741,36 @@ void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*)
                 cur        = g_notifyAutoWin;
                 curVerbose = g_verbose;
             }
-            g_host->ChatPrintf(u8"[steam] 隐藏必中保底提醒当前: %s | 详细(verbose): %s (用法: `$rng steam pity on|off`)",
-                               cur ? u8"开" : u8"关",
-                               curVerbose ? u8"开" : u8"关-静默");
+            g_host->ChatPrintf(en ? "[steam] Pity alert: %s | Verbose: %s (`$rng steam pity on|off`)"
+                                  : u8"[steam] 隐藏必中保底提醒当前: %s | 详细(verbose): %s (用法: `$rng steam pity on|off`)",
+                               cur ? (en ? "ON" : u8"开") : (en ? "OFF" : u8"关"),
+                               curVerbose ? (en ? "ON" : u8"开") : (en ? "OFF-quiet" : u8"关-静默"));
             return;
         }
         const std::string v = LowerAscii(argv[1]);
-        const bool en = (v == "on" || v == "1" || v == "true");
-        if (!en && v != "off" && v != "0" && v != "false") {
-            g_host->ChatPrint(u8"[steam] 用法: `$rng steam pity <on|off>`");
+        const bool val = (v == "on" || v == "1" || v == "true");
+        if (!val && v != "off" && v != "0" && v != "false") {
+            g_host->ChatPrint(en ? "[steam] Usage: `$rng steam pity <on|off>`" : u8"[steam] 用法: `$rng steam pity <on|off>`");
             return;
         }
         bool curVerbose = false;
         {
             std::lock_guard<std::mutex> lk(g_stateMx);
-            g_notifyAutoWin = en;
+            g_notifyAutoWin = val;
             curVerbose      = g_verbose;
         }
-        if (en && !curVerbose) {
-            g_host->ChatPrint(u8"[steam] 隐藏必中保底提醒已开启 (当前 verbose 为关，如需游戏内播报请执行 `$rng steam verbose on`)");
+        if (val && !curVerbose) {
+            g_host->ChatPrint(en ? "[steam] Pity alert ON (verbose is OFF; run `$rng steam verbose on` to show in chat)"
+                                 : u8"[steam] 隐藏必中保底提醒已开启 (当前 verbose 为关，如需游戏内播报请执行 `$rng steam verbose on`)");
         } else {
-            g_host->ChatPrintf(u8"[steam] 隐藏必中保底提醒已%s", en ? u8"开启" : u8"关闭");
+            g_host->ChatPrintf(en ? "[steam] Pity alert %s" : u8"[steam] 隐藏必中保底提醒已%s",
+                               val ? (en ? "ON" : u8"开启") : (en ? "OFF" : u8"关闭"));
         }
         return;
     }
     if (a0 == "style") {
         if (argc < 2) {
-            g_host->ChatPrint(u8"[steam] 用法: `$rng steam style <kb|cn|xbox|ps|num>`");
+            g_host->ChatPrint(en ? "[steam] Usage: `$rng steam style <kb|cn|xbox|ps|num>`" : u8"[steam] 用法: `$rng steam style <kb|cn|xbox|ps|num>`");
             return;
         }
         const std::string v = LowerAscii(argv[1]);
@@ -707,14 +781,15 @@ void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*)
         else if (v == "ps" || v == "ps4" || v == "ds4") st = HintStyle::kPlaySta;
         else if (v == "num" || v == "123") st = HintStyle::kNumeric;
         else {
-            g_host->ChatPrint(u8"[steam] 未知样式；可选: `kb` / `cn` / `xbox` / `ps` / `num`");
+            g_host->ChatPrint(en ? "[steam] Unknown style; choose `kb` / `cn` / `xbox` / `ps` / `num`"
+                                 : u8"[steam] 未知样式；可选: `kb` / `cn` / `xbox` / `ps` / `num`");
             return;
         }
         {
             std::lock_guard<std::mutex> lk(g_stateMx);
             g_style = st;
         }
-        g_host->ChatPrintf(u8"[steam] 按键提示样式已切换为: %s", StyleNameCn(st));
+        g_host->ChatPrintf(en ? "[steam] Hint style -> %s" : u8"[steam] 按键提示样式已切换为: %s", StyleName(st, en));
         return;
     }
     if (a0 == "lock") {
@@ -730,15 +805,17 @@ void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*)
                 curStyle      = g_style;
                 curVerbose    = g_verbose;
             }
-            const char* quietNote = curVerbose ? "" : u8"；每轮静默，要显示开 `$rng steam verbose on`";
+            const std::string ordTxt = FormatOrderText(kDefaultAwd, curStyle, en);
             if (!g_host->IsTakeoverEnabled()) {
-                g_host->ChatPrintf(u8"[steam] 未指定顺序，已默认预设锁序=%s (按住空格/RT/R2；当前非接管模式，请先 `$rng selective` 或 `$rng on`%s)",
-                                   FormatOrderText(kDefaultAwd, curStyle).c_str(),
-                                   quietNote);
+                g_host->ChatPrintf(en ? "[steam] Armed default lock=%s (kernel paused; run `$rng selective` or `$rng on`%s)"
+                                      : u8"[steam] 未指定顺序，已默认预设锁序=%s (按住空格/RT/R2；当前非接管模式，请先 `$rng selective` 或 `$rng on`%s)",
+                                   ordTxt.c_str(),
+                                   curVerbose ? "" : (en ? "" : u8"；每轮静默，要显示开 `$rng steam verbose on`"));
             } else {
-                g_host->ChatPrintf(u8"[steam] 未指定顺序，已默认锁定为 %s (按住空格/RT/R2即全中；`lock <顺序|off>`可改或解除%s)",
-                                   FormatOrderText(kDefaultAwd, curStyle).c_str(),
-                                   quietNote);
+                g_host->ChatPrintf(en ? "[steam] Locked key order -> %s (hold Space/RT/R2%s)"
+                                      : u8"[steam] 未指定顺序，已默认锁定为 %s (按住空格/RT/R2即全中；`lock <顺序|off>`可改或解除%s)",
+                                   ordTxt.c_str(),
+                                   curVerbose ? "" : (en ? "; quiet, run verbose on to show" : u8"；每轮静默，要显示开 `$rng steam verbose on`"));
             }
             return;
         }
@@ -748,12 +825,14 @@ void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*)
                 std::lock_guard<std::mutex> lk(g_stateMx);
                 g_lockEnabled = false;
             }
-            g_host->ChatPrint(u8"[steam] 已解除固定按键顺序 -> 恢复原版顺序(仅提示)");
+            g_host->ChatPrint(en ? "[steam] Unlocked key order -> vanilla RNG (hints still active)"
+                                 : u8"[steam] 已解除固定按键顺序 -> 恢复原版顺序(仅提示)");
             return;
         }
         std::array<std::uint8_t, 3> ord{};
         if (!ParsePermOrder(argv[1], ord)) {
-            g_host->ChatPrint(u8"[steam] 无效顺序；请指定 3 键全排列如 `awd` / `wda` / `123` / `r2` 或 `off`");
+            g_host->ChatPrint(en ? "[steam] Invalid order; specify e.g. `awd` / `wda` / `123` / `r2` or `off`"
+                                 : u8"[steam] 无效顺序；请指定 3 键全排列如 `awd` / `wda` / `123` / `r2` 或 `off`");
             return;
         }
         HintStyle curStyle   = HintStyle::kKeyboard;
@@ -766,28 +845,60 @@ void __fastcall Cmd_Steam(int argc, const char* const* argv, const char*, void*)
             curStyle      = g_style;
             curVerbose    = g_verbose;
         }
-        const char* quietNote = curVerbose ? "" : u8" (每轮静默，如需播报开 `$rng steam verbose on`)";
+        const std::string ordTxt = FormatOrderText(ord, curStyle, en);
         if (!g_host->IsTakeoverEnabled()) {
-            g_host->ChatPrintf(u8"[steam] 已预设锁序=%s (注意: 当前非接管模式，请执行 `$rng selective` 或 `$rng on` 使锁序生效)%s",
-                               FormatOrderText(ord, curStyle).c_str(),
-                               quietNote);
+            g_host->ChatPrintf(en ? "[steam] Armed lock=%s (run `$rng selective` or `$rng on` to enable)"
+                                  : u8"[steam] 已预设锁序=%s (注意: 当前非接管模式，请执行 `$rng selective` 或 `$rng on` 使锁序生效)%s",
+                               ordTxt.c_str(),
+                               en ? "" : (curVerbose ? "" : u8" (每轮静默，如需播报开 `$rng steam verbose on`)"));
         } else {
-            g_host->ChatPrintf(u8"[steam] 已锁定每轮按键顺序 -> %s%s",
-                               FormatOrderText(ord, curStyle).c_str(),
-                               quietNote);
+            g_host->ChatPrintf(en ? "[steam] Locked key order -> %s%s"
+                                  : u8"[steam] 已锁定每轮按键顺序 -> %s%s",
+                               ordTxt.c_str(),
+                               curVerbose ? "" : (en ? " (quiet; `verbose on` to show)" : u8" (每轮静默，如需播报开 `$rng steam verbose on`)"));
         }
         return;
     }
 
-    g_host->ChatPrintf(u8"[steam] 未知参数 `%s`；输 `$rng steam help` 查看用法", argv[0]);
+    g_host->ChatPrintf(en ? "[steam] Unknown arg `%s`; type `$rng steam help`" : u8"[steam] 未知参数 `%s`；输 `$rng steam help` 查看用法", argv[0]);
+}
+
+void __fastcall Complete_Steam(const char*,
+                               int argc,
+                               const char* const* argv,
+                               const char*,
+                               MhwRngCompletionSinkFn addCand,
+                               void* sinkCtx,
+                               void*) {
+    if (!addCand) return;
+    if (argc == 0) {
+        static const char* const kTop[] = {
+            "status", "help", "on", "off", "verbose", "pity", "style", "lock", "reset"
+        };
+        for (const char* t : kTop) addCand(t, sinkCtx);
+        return;
+    }
+    if (argc == 1 && argv && argv[0]) {
+        const std::string a0 = LowerAscii(argv[0]);
+        if (a0 == "verbose" || a0 == "v" || a0 == "pity") {
+            addCand("on", sinkCtx);
+            addCand("off", sinkCtx);
+        } else if (a0 == "style") {
+            static const char* const kStyles[] = { "kb", "cn", "xbox", "ps", "num" };
+            for (const char* s : kStyles) addCand(s, sinkCtx);
+        } else if (a0 == "lock") {
+            static const char* const kOrders[] = { "awd", "adw", "wad", "wda", "daw", "dwa", "r2", "off" };
+            for (const char* o : kOrders) addCand(o, sinkCtx);
+        }
+    }
 }
 
 const MhwRngPluginDescriptor kPluginDesc = {
     kMhwRngApiVersion,
     "steam",
     u8"蒸汽机按键提示与控序插件",
-    "1.1.0",
-    u8"实时解码蒸汽机三键顺序、红槽与隐藏必中保底，支持ObserveOnly纯透视与Takeover锁序(SDK v3示例)"
+    "1.3.0",
+    u8"实时解码蒸汽机三键顺序、红槽与隐藏必中保底，支持ObserveOnly纯透视与Selective/Takeover锁序"
 };
 
 } // namespace
@@ -801,24 +912,37 @@ MHW_RNG_PLUGIN_EXPORT bool MhwRngPlugin_Init(const MhwRngHostApi* host, MhwRngPl
     g_host   = host;
     g_selfId = selfId;
 
-    host->RegisterSiteMeta(selfId,
-                           kRvaSteamCode1,
-                           "steam.code.1",
-                           u8"蒸汽机三键排列生成 #1 (pos1 = r1 % 3)",
-                           &FormatSteamSlotStatus,
-                           nullptr);
-    host->RegisterSiteMeta(selfId,
-                           kRvaSteamCode2,
-                           "steam.code.2",
-                           u8"蒸汽机三键排列生成 #2 (pos2 = (pos1 + (r2&1) + 1) % 3)",
-                           &FormatSteamSlotStatus,
-                           nullptr);
-    host->RegisterSiteMeta(selfId,
-                           kRvaSteamAutoWin,
-                           "steam.autowin",
-                           u8"蒸汽机隐藏必中保底判定 (r % 100 < pityPct)",
-                           &FormatSteamSlotStatus,
-                           nullptr);
+    MhwRng_RegisterPluginInfoBi(
+        host, selfId,
+        u8"蒸汽机按键提示与控序插件",
+        "Steamworks Key Hint & Sequence Controller",
+        u8"实时解码蒸汽机三键顺序、红槽与隐藏必中保底，支持纯透视与锁序",
+        "Live Steamworks 3-key hints, red bonus/pity tracking & optional sequence lock");
+
+    MhwRng_RegisterSiteMetaBi(
+        host, selfId,
+        kRvaSteamCode1,
+        "steam.code.1",
+        u8"蒸汽机三键排列生成 #1 (pos1 = r1 % 3)",
+        "Steamworks 3-key sequence gen #1 (pos1 = r1 % 3)",
+        &FormatSteamSlotStatus,
+        nullptr);
+    MhwRng_RegisterSiteMetaBi(
+        host, selfId,
+        kRvaSteamCode2,
+        "steam.code.2",
+        u8"蒸汽机三键排列生成 #2 (pos2 = (pos1 + (r2&1) + 1) % 3)",
+        "Steamworks 3-key sequence gen #2 (pos2 = (pos1 + (r2&1) + 1) % 3)",
+        &FormatSteamSlotStatus,
+        nullptr);
+    MhwRng_RegisterSiteMetaBi(
+        host, selfId,
+        kRvaSteamAutoWin,
+        "steam.autowin",
+        u8"蒸汽机隐藏必中保底判定 (r % 100 < pityPct)",
+        "Steamworks hidden guaranteed-win pity roll (r % 100 < pityPct)",
+        &FormatSteamSlotStatus,
+        nullptr);
 
     MhwRngHookDesc h1{};
     h1.structSize = sizeof(h1);
@@ -848,12 +972,15 @@ MHW_RNG_PLUGIN_EXPORT bool MhwRngPlugin_Init(const MhwRngHostApi* host, MhwRngPl
 
     g_hookLife = host->RegisterLifecycleHook(selfId, &OnKernelLifecycle, nullptr);
 
-    host->RegisterSubcommand(selfId,
-                             "steam",
-                             "$rng steam [on|off|verbose [on|off]|style kb|lock [awd|off]|pity on|reset]",
-                             u8"蒸汽机三键顺序实时提示与可选固定按键顺序",
-                             &Cmd_Steam,
-                             nullptr);
+    MhwRng_RegisterSubcommandBi(
+        host, selfId,
+        "steam",
+        "$rng steam [on|off|verbose [on|off]|style kb|lock [awd|off]|pity on|reset]",
+        u8"蒸汽机三键顺序实时提示与可选固定按键顺序",
+        "Steamworks live 3-key hint overlay & optional key-order lock",
+        &Cmd_Steam,
+        nullptr);
+    MhwRng_RegisterSubcommandCompleter(host, selfId, "steam", &Complete_Steam, nullptr);
 
     if (g_hookCode1 == kMhwRngInvalidHandle || g_hookCode2 == kMhwRngInvalidHandle) {
         return false;
